@@ -29,6 +29,7 @@ import (
 
 	"github.com/emicklei/go-restful"
 	"github.com/gorilla/websocket"
+	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	certutil "k8s.io/client-go/util/cert"
@@ -203,6 +204,7 @@ func (s *TunnelServer) updateNodeKubeletEndpoint(nodeName string) error {
 			return false, nil
 		}
 
+		getNode = messagelayer.HijackInternalIP(getNode)
 		getNode.Status.DaemonEndpoints.KubeletEndpoint.Port = int32(s.tunnelPort)
 		_, err = client.GetKubeClient().CoreV1().Nodes().UpdateStatus(context.Background(), getNode, metav1.UpdateOptions{})
 		if err != nil {

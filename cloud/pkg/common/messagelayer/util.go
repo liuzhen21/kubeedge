@@ -21,11 +21,11 @@ import (
 	"fmt"
 	"strings"
 
-	"k8s.io/klog/v2"
-
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/common/constants"
 	pkgutil "github.com/kubeedge/kubeedge/pkg/util"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -146,4 +146,62 @@ func GetResourceTypeForDevice(resource string) (string, error) {
 	}
 
 	return "", fmt.Errorf("unknown resource, found: %s", resource)
+}
+
+func HijackInternalIP(node *v1.Node) *v1.Node {
+	// TODO POD IP or SVC IP
+	podIP, err := pkgutil.GetLocalIP(pkgutil.GetHostname())
+	if err != nil {
+		klog.Errorf("Failed to get Local IP address: %v", err)
+		return node
+	}
+	klog.Infoln("pod ip", podIP)
+
+	internalIP := ""
+	for i, address := range node.Status.Addresses {
+		if address.Type == v1.NodeInternalIP {
+			internalIP = node.Status.Addresses[i].Address
+			node.Status.Addresses[i].Address = podIP
+			break
+		}
+	}
+	if node.Status.DaemonEndpoints.KubeletEndpoint.Port == 0 {
+		node.Status.DaemonEndpoints.KubeletEndpoint.Port = 10003
+	}
+	if node.GetAnnotations() != nil {
+		node.Annotations["kubeedge.io/internal-ip"] = internalIP
+	} else {
+		node.Annotations = make(map[string]string)
+		node.Annotations["kubeedge.io/internal-ip"] = internalIP
+	}
+	return node
+}
+
+func RegainInternalIP(node *v1.Node) *v1.Node {
+	if node.GetAnnotations() != nil {
+		if val, ok := node.Annotations["kubeedge.io/internal-ip"]; ok {
+			SetInternalIP(node, val)
+		}
+	}
+	return node
+}
+
+func SetInternalIP(node *v1.Node, target string) {
+	for i, address := range node.Status.Addresses {
+		if address.Type == v1.NodeInternalIP {
+			node.Status.Addresses[i].Address = target
+			break
+		}
+	}
+}
+
+func GetInternalIP(node *v1.Node) string {
+	internalIP := ""
+	for i, address := range node.Status.Addresses {
+		if address.Type == v1.NodeInternalIP {
+			internalIP = node.Status.Addresses[i].Address
+			break
+		}
+	}
+	return internalIP
 }

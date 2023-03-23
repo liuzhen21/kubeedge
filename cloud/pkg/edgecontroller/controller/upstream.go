@@ -26,6 +26,7 @@ we grab some functions from `kubelet/status/status_manager.go and do some modifi
 package controller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	stderrors "errors"
@@ -33,19 +34,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	authenticationv1 "k8s.io/api/authentication/v1"
-	coordinationv1 "k8s.io/api/coordination/v1"
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	apimachineryType "k8s.io/apimachinery/pkg/types"
-	k8sinformer "k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
-	coordinationlisters "k8s.io/client-go/listers/coordination/v1"
-	corelisters "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog/v2"
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
@@ -62,6 +50,19 @@ import (
 	rulesv1 "github.com/kubeedge/kubeedge/pkg/apis/rules/v1"
 	crdClientset "github.com/kubeedge/kubeedge/pkg/client/clientset/versioned"
 	"github.com/kubeedge/kubeedge/pkg/metaserver/util"
+	pkgutil "github.com/kubeedge/kubeedge/pkg/util"
+	authenticationv1 "k8s.io/api/authentication/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	apimachineryType "k8s.io/apimachinery/pkg/types"
+	k8sinformer "k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
+	coordinationlisters "k8s.io/client-go/listers/coordination/v1"
+	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog/v2"
 )
 
 // SortedContainerStatuses define A type to help sort container statuses based on container names.
@@ -582,6 +583,7 @@ func (uc *UpstreamController) updateNodeStatus() {
 				}
 
 				getNode.Status = nodeStatusRequest.Status
+				getNode = messagelayer.HijackInternalIP(getNode)
 
 				node, err := uc.kubeClient.CoreV1().Nodes().UpdateStatus(context.Background(), getNode, metaV1.UpdateOptions{})
 				if err != nil {
@@ -636,7 +638,9 @@ func kubeClientGet(uc *UpstreamController, namespace string, name string, queryT
 	case common.ResourceTypeVolumeAttachment:
 		obj, err = uc.kubeClient.StorageV1().VolumeAttachments().Get(context.Background(), name, metaV1.GetOptions{})
 	case model.ResourceTypeNode:
-		obj, err = uc.nodeLister.Get(name)
+		var node *v1.Node
+		node, err = uc.nodeLister.Get(name)
+		obj = messagelayer.RegainInternalIP(node)
 	case model.ResourceTypeServiceAccountToken:
 		obj, err = uc.getServiceAccountToken(namespace, name, msg)
 	case model.ResourceTypeLease:
@@ -837,6 +841,7 @@ func (uc *UpstreamController) registerNode() {
 			if err != nil {
 				klog.Errorf("create node %s error: %v , register node failed", name, err)
 			}
+			resp = messagelayer.RegainInternalIP(resp)
 
 			resMsg := model.NewMessage(msg.GetID()).
 				FillBody(&ObjectResp{Object: resp, Err: err}).
@@ -858,7 +863,7 @@ func (uc *UpstreamController) patchNode() {
 			klog.Warning("stop patchNode")
 			return
 		case msg := <-uc.patchNodeChan:
-			klog.V(5).Infof("message: %s, operation is: %s, and resource is %s", msg.GetID(), msg.GetOperation(), msg.GetResource())
+			klog.Infof("message: %s, operation is: %s, and resource is %s", msg.GetID(), msg.GetOperation(), msg.GetResource())
 
 			namespace, err := messagelayer.GetNamespace(msg)
 			if err != nil {
@@ -877,10 +882,29 @@ func (uc *UpstreamController) patchNode() {
 				continue
 			}
 
+			podIP, err := pkgutil.GetLocalIP(pkgutil.GetHostname())
+			if err != nil {
+				klog.Errorf("Failed to get Local IP address: %v", err)
+				continue
+			}
+
+			nodeToPatch := &v1.Node{}
+			err = json.Unmarshal(patchBytes, nodeToPatch)
+			if err != nil {
+				klog.Warningf("message: %s process failure, unmarshal msg data failed with error: %v", msg.GetID(), err)
+				continue
+			}
+			originIP := messagelayer.GetInternalIP(nodeToPatch)
+
+			if originIP != "" {
+				patchBytes = bytes.ReplaceAll(patchBytes, []byte(originIP), []byte(podIP))
+			}
+
 			node, err := uc.kubeClient.CoreV1().Nodes().Patch(context.TODO(), name, apimachineryType.StrategicMergePatchType, patchBytes, metaV1.PatchOptions{}, "status")
 			if err != nil {
 				klog.Errorf("message: %s process failure, patch node failed with error: %v, namespace: %s, name: %s", msg.GetID(), err, namespace, name)
 			}
+			messagelayer.SetInternalIP(node, originIP)
 
 			resMsg := model.NewMessage(msg.GetID()).
 				SetResourceVersion(node.ResourceVersion).

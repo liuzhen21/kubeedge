@@ -42,7 +42,7 @@ func newCloudStream(enable bool, tunnelPort int) *cloudStream {
 
 func Register(controller *v1alpha1.CloudStream, commonConfig *v1alpha1.CommonConfig) {
 	config.InitConfigure(controller)
-	core.Register(newCloudStream(controller.Enable, commonConfig.TunnelPort))
+	core.Register(newCloudStream(controller.Enable, int(controller.StreamPort)))
 }
 
 func (s *cloudStream) Name() string {
