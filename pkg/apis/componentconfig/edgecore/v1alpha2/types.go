@@ -119,6 +119,10 @@ type Edged struct {
 	//RegisterNodeNamespace indicates register node namespace
 	// default "default"
 	RegisterNodeNamespace string `json:"registerNodeNamespace,omitempty"`
+
+	// Count of the edge
+	// default 1
+	Count int `json:"count"`
 }
 
 // TailoredKubeletConfiguration indicates the tailored kubelet configuration.
