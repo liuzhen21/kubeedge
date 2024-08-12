@@ -144,6 +144,7 @@ func EdgeCoreConfig(config *hollowEdgeNodeConfig) *v1alpha2.EdgeCoreConfig {
 	trueFlag := true
 
 	// overWrite config
+	edgeCoreConfig.DataBase.DataSource = "/edgecore.db"
 	edgeCoreConfig.Modules.EdgeHub.Token = config.Token
 	edgeCoreConfig.Modules.EdgeHub.HTTPServer = config.HTTPServer
 	edgeCoreConfig.Modules.EdgeHub.MessageQPS = 300
