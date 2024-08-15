@@ -25,6 +25,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/featuregate"
 	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
@@ -152,10 +154,20 @@ func EdgeCoreConfig(config *hollowEdgeNodeConfig) *v1alpha2.EdgeCoreConfig {
 	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.EnableControllerAttachDetach = &falseFlag
 	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.ProtectKernelDefaults = false
 
+	taint := corev1.Taint{
+		Key:    "node-role.kubernetes.io/edge",
+		Effect: "NoSchedule",
+	}
+	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.RegisterWithTaints = append(edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.RegisterWithTaints, taint)
+
+	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.NodeLeaseDurationSeconds = 120
+	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.SyncFrequency = metav1.Duration{
+		Duration: time.Minute * 2,
+	}
+
 	edgeCoreConfig.Modules.DeviceTwin.Enable = falseFlag
 	edgeCoreConfig.Modules.EventBus.Enable = falseFlag
 	edgeCoreConfig.Modules.EdgeStream.Enable = falseFlag
-	
 
 	return edgeCoreConfig
 }

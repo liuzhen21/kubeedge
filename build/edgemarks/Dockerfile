@@ -10,7 +10,7 @@ RUN apk --no-cache update
 RUN apk --no-cache upgrade
 RUN apk --no-cache add build-base linux-headers sqlite-dev binutils-gold 
 RUN CGO_ENABLED=1 GO111MODULE=off go build -v -o /usr/local/bin/edgemark -ldflags="${GO_LDFLAGS} -w -s -extldflags -static" \
-github.com/kubeedge/kubeedge/edge/cmd/edgemark
+github.com/kubeedge/kubeedge/edge/cmd/edgemarks
 
 FROM alpine:3.16.2
 

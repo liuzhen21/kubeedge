@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	goruntime "runtime"
 	"sort"
 	"strings"
@@ -376,6 +377,7 @@ func (kl *Kubelet) syncNodeStatus() {
 	}
 	if err := kl.updateNodeStatus(); err != nil {
 		klog.ErrorS(err, "Unable to update node status")
+		os.Exit(1)
 	}
 }
 
