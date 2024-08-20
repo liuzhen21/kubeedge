@@ -144,6 +144,7 @@ func EdgeCoreConfig(config *hollowEdgeNodeConfig) *v1alpha2.EdgeCoreConfig {
 	edgeCoreConfig.Modules.EdgeHub.Token = config.Token
 	edgeCoreConfig.Modules.EdgeHub.HTTPServer = config.HTTPServer
 	edgeCoreConfig.Modules.EdgeHub.WebSocket.Server = config.WebsocketServer
+	edgeCoreConfig.Modules.EdgeHub.Heartbeat = 60
 
 	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.ReadOnlyPort = 0
 	edgeCoreConfig.Modules.Edged.HostnameOverride = config.NodeName
@@ -160,9 +161,9 @@ func EdgeCoreConfig(config *hollowEdgeNodeConfig) *v1alpha2.EdgeCoreConfig {
 	}
 	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.RegisterWithTaints = append(edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.RegisterWithTaints, taint)
 
-	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.NodeLeaseDurationSeconds = 120
+	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.NodeLeaseDurationSeconds = 240
 	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.SyncFrequency = metav1.Duration{
-		Duration: time.Minute * 2,
+		Duration: time.Minute * 5,
 	}
 
 	edgeCoreConfig.Modules.DeviceTwin.Enable = falseFlag
