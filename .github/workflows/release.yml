@@ -150,7 +150,7 @@ jobs:
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v1.9.0
     with:
       image: kubeedge/${{ matrix.target }}
-      registry-username: ${{ secrets.DOCKERHUB_USER_NAME }}
+      registry-username: ${{ vars.DOCKERHUB_USER_NAME }}
       digest: ${{ needs.publish-image-to-dockerhub.outputs[format('hash-digest-{0}', matrix.target)] }}
     secrets:
       registry-password: ${{ secrets.DOCKERHUB_TOKEN }}
