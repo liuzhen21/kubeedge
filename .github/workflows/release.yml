@@ -6,7 +6,7 @@ on:
 
 env:
   CONTAINER_RUN_OPTIONS: " "
-  IMAGE_REPOSITORY: kubesphere
+  IMAGE_REPOSITORY: edgewize
 
 jobs:
   release-assests:
