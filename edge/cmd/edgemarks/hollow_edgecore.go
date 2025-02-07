@@ -29,7 +29,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/featuregate"
-	"k8s.io/klog/v2"
 	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
 	"k8s.io/kubernetes/pkg/kubelet"
@@ -99,8 +98,6 @@ func newHollowEdgeNodeCommand() *cobra.Command {
 
 	fs := cmd.Flags()
 	fs.AddGoFlagSet(flag.CommandLine) // for flags like --docker-only
-	klog.InitFlags(nil)               // 初始化 klog 的标志
-	fs.AddGoFlagSet(flag.CommandLine) // 添加 klog 的标志
 	s.addFlags(fs)
 
 	return cmd
@@ -164,9 +161,9 @@ func EdgeCoreConfig(config *hollowEdgeNodeConfig) *v1alpha2.EdgeCoreConfig {
 	}
 	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.RegisterWithTaints = append(edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.RegisterWithTaints, taint)
 
-	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.NodeLeaseDurationSeconds = 60
+	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.NodeLeaseDurationSeconds = 240
 	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.SyncFrequency = metav1.Duration{
-		Duration: time.Minute * 4,
+		Duration: time.Minute * 5,
 	}
 
 	edgeCoreConfig.Modules.DeviceTwin.Enable = falseFlag
