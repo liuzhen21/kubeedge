@@ -100,6 +100,8 @@ type Modules struct {
 	Router *Router `json:"router,omitempty"`
 	// IptablesManager indicates iptables module config
 	IptablesManager *IptablesManager `json:"iptablesManager,omitempty"`
+	// PolicyController indicates policycontroller module config
+	PolicyController *PolicyController `json:"policyController,omitempty"`
 }
 
 // CloudHub indicates the config of CloudHub module.
@@ -536,6 +538,16 @@ type Router struct {
 	Address     string `json:"address,omitempty"`
 	Port        uint32 `json:"port,omitempty"`
 	RestTimeout uint32 `json:"restTimeout,omitempty"`
+}
+
+// PolicyController indicates the policycontroller module config
+type PolicyController struct {
+	// Enable indicates whether policycontroller is enabled
+	// default true when feature gate RequireAuthorization enabled
+	Enable bool `json:"enable"`
+	// PeriodicResyncInterval sets the interval of periodic reconcile for serviceaccountaccess
+	// default 2m
+	PeriodicResyncInterval metav1.Duration `json:"periodicResyncInterval,omitempty"`
 }
 
 // IptablesManager indicates the config of Iptables

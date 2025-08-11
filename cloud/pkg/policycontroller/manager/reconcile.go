@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -20,6 +21,7 @@ import (
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -49,6 +51,50 @@ func (c *Controller) Reconcile(ctx context.Context, request controllerruntime.Re
 		return controllerruntime.Result{}, nil
 	}
 	return c.syncRules(ctx, acc)
+}
+
+// HandleSyncRequest handles edge-initiated sync request, and sends back the list
+// of ServiceAccountAccess that should be present on that node.
+// The request message's resource is formatted as:
+//
+//	node/<nodeName>/<namespace or _>/serviceaccountaccess
+//
+// If namespace is "_", it means all namespaces.
+func (c *Controller) HandleSyncRequest(ctx context.Context, nodeName, namespace string) {
+	start := time.Now()
+	klog.V(2).Infof("[SAA SyncRequest] start: node=%s namespace=%q", nodeName, namespace)
+	list := &policyv1alpha1.ServiceAccountAccessList{}
+	var listOpts []client.ListOption
+	if namespace != "" && namespace != "_" {
+		listOpts = append(listOpts, &client.ListOptions{Namespace: namespace})
+	}
+	if err := c.Client.List(ctx, list, listOpts...); err != nil {
+		klog.Errorf("failed to list serviceaccountaccess for sync request: %v", err)
+		return
+	}
+	// filter by target node list
+	for i := range list.Items {
+		acc := &list.Items[i]
+		if acc.GetDeletionTimestamp() != nil {
+			klog.V(5).Infof("[SAA SyncRequest] skip deleting %s/%s", acc.Namespace, acc.Name)
+			continue
+		}
+		nodes, err := getNodeListOfServiceAccountAccess(ctx, c.Client, acc)
+		if err != nil {
+			klog.Errorf("failed to get nodes for %s/%s: %v", acc.Namespace, acc.Name, err)
+			continue
+		}
+		klog.V(4).Infof("[SAA SyncRequest] %s/%s targets=%v", acc.Namespace, acc.Name, nodes)
+		// if this node should hold this access, send it
+		for _, n := range nodes {
+			if n == nodeName {
+				klog.V(3).Infof("[SAA SyncRequest] send acc %s/%s to node=%s", acc.Namespace, acc.Name, nodeName)
+				c.send2Edge(acc, []string{nodeName}, model.UpdateOperation)
+				break
+			}
+		}
+	}
+	klog.V(2).Infof("[SAA SyncRequest] done: node=%s namespace=%q cost=%s", nodeName, namespace, time.Since(start))
 }
 
 func (c *Controller) filterResource(ctx context.Context, object client.Object) bool {
@@ -187,11 +233,8 @@ func (c *Controller) mapObjectFunc(_ context.Context, object client.Object) []co
 		sa := obj.Spec.ServiceAccountName
 		for _, am := range accList.Items {
 			if am.Spec.ServiceAccount.Name == sa && am.Spec.ServiceAccount.Namespace == object.GetNamespace() {
-				if obj.GetDeletionTimestamp() == nil {
-					// won't reconcile pod update event
-					return []controllerruntime.Request{}
-				}
-				klog.V(4).Infof("reconcile pod deleting %s/%s", obj.Namespace, obj.Name)
+				// Only pod create/delete events enter here (normal updates are filtered by predicates), immediately trigger a reconcile for the corresponding SAA
+				klog.V(4).Infof("enqueue SAA reconcile for pod event %s/%s", obj.Namespace, obj.Name)
 				return []controllerruntime.Request{{NamespacedName: client.ObjectKey{Namespace: am.Namespace, Name: am.Name}}}
 			}
 		}
@@ -225,6 +268,7 @@ func (c *Controller) filterObject(ctx context.Context, object client.Object) boo
 	case *corev1.Pod:
 		node := obj.Spec.NodeName
 		if obj.Spec.ServiceAccountName == "" || node == "" || !isEdgeNode(ctx, c.Client, node) {
+			klog.V(2).Infof("filter out pod %s/%s, node=%s", obj.Namespace, obj.Name, node)
 			return false
 		}
 		return true
@@ -268,9 +312,35 @@ func (c *Controller) SetupWithManager(ctx context.Context, mgr controllerruntime
 		Watches(&corev1.ServiceAccount{}, handler.EnqueueRequestsFromMapFunc(c.mapObjectFunc), builder.WithPredicates(predicate.NewPredicateFuncs(func(object client.Object) bool {
 			return c.filterObject(ctx, object)
 		}))).
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(c.mapObjectFunc), builder.WithPredicates(predicate.NewPredicateFuncs(func(object client.Object) bool {
-			return c.filterObject(ctx, object)
-		}))).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(c.mapObjectFunc), builder.WithPredicates(predicate.Funcs{
+			CreateFunc: func(e event.CreateEvent) bool {
+				klog.V(2).Infof("enqueue SAA reconcile for pod create event %s/%s", e.Object.GetNamespace(), e.Object.GetName())
+				return c.filterObject(ctx, e.Object)
+			},
+			DeleteFunc: func(e event.DeleteEvent) bool {
+				klog.V(2).Infof("enqueue SAA reconcile for pod delete event %s/%s", e.Object.GetNamespace(), e.Object.GetName())
+				return c.filterObject(ctx, e.Object)
+			},
+			UpdateFunc: func(e event.UpdateEvent) bool {
+				oldPod, ok1 := e.ObjectOld.(*corev1.Pod)
+				newPod, ok2 := e.ObjectNew.(*corev1.Pod)
+				if !ok1 || !ok2 {
+					return false
+				}
+				// Only allow NodeName transition from empty to non-empty, or ServiceAccountName changes
+				if oldPod.Spec.NodeName == "" && newPod.Spec.NodeName != "" {
+					return c.filterObject(ctx, newPod)
+				}
+				if oldPod.Spec.ServiceAccountName != newPod.Spec.ServiceAccountName {
+					return c.filterObject(ctx, newPod)
+				}
+				return false
+			},
+			GenericFunc: func(e event.GenericEvent) bool {
+				klog.V(2).Infof("enqueue SAA reconcile for pod generic event %s/%s", e.Object.GetNamespace(), e.Object.GetName())
+				return false
+			},
+		})).
 		Complete(c)
 }
 
@@ -346,10 +416,13 @@ func subtractSlice(source, subTarget []string) []string {
 
 func (c *Controller) send2Edge(acc *policyv1alpha1.ServiceAccountAccess, targets []string, opr string) {
 	sendObj := acc.DeepCopy()
+	klog.V(3).Infof("[SAA send2Edge] begin: acc=%s/%s rv=%s targets=%d op=%s", sendObj.Namespace, sendObj.Name, sendObj.ResourceVersion, len(targets), opr)
+	var sent, buildErr, sendErr int
 	for _, node := range targets {
 		resource, err := messagelayer.BuildResource(node, sendObj.Namespace, model.ResourceTypeSaAccess, sendObj.Name)
 		if err != nil {
-			klog.Warningf("built message resource failed with error: %s", err)
+			buildErr++
+			klog.Warningf("[SAA send2Edge] build resource failed: node=%s acc=%s/%s err=%v", node, sendObj.Namespace, sendObj.Name, err)
 			continue
 		}
 		// filter out the node list data
@@ -358,10 +431,13 @@ func (c *Controller) send2Edge(acc *policyv1alpha1.ServiceAccountAccess, targets
 			SetResourceVersion(sendObj.ResourceVersion).
 			FillBody(sendObj).BuildRouter(modules.PolicyControllerModuleName, constants.GroupResource, resource, opr)
 		if err := c.MessageLayer.Send(*msg); err != nil {
-			klog.Warningf("send message %s failed with error: %s", resource, err)
+			sendErr++
+			klog.Warningf("[SAA send2Edge] send failed: resource=%s err=%v", resource, err)
 			continue
 		}
+		sent++
 	}
+	klog.V(3).Infof("[SAA send2Edge] done: acc=%s/%s total=%d sent=%d buildErr=%d sendErr=%d", sendObj.Namespace, sendObj.Name, len(targets), sent, buildErr, sendErr)
 }
 
 func (c *Controller) syncRules(ctx context.Context, acc *policyv1alpha1.ServiceAccountAccess) (controllerruntime.Result, error) {
@@ -447,6 +523,52 @@ func (c *Controller) syncRules(ctx context.Context, acc *policyv1alpha1.ServiceA
 		}
 	}
 	return controllerruntime.Result{}, nil
+}
+
+// StartPeriodicResync periodically re-syncs all ServiceAccountAccess resources
+// to ensure eventual consistency across edge nodes even without object updates.
+// It enumerates all ServiceAccountAccess objects and invokes the same reconcile
+// logic used by event-driven reconciliation.
+func (c *Controller) StartPeriodicResync(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		klog.V(2).Infof("[SAA PeriodicResync] disabled (interval<=0)")
+		return
+	}
+	klog.V(2).Infof("[SAA PeriodicResync] start with interval=%s", interval.String())
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				klog.V(2).Infof("[SAA PeriodicResync] context done, stop")
+				return
+			case <-ticker.C:
+				tickStart := time.Now()
+				var accList = &policyv1alpha1.ServiceAccountAccessList{}
+				if err := c.Client.List(ctx, accList); err != nil {
+					klog.Errorf("[SAA PeriodicResync] list serviceaccountaccess failed: %v", err)
+					continue
+				}
+				processed, skipped, failed := 0, 0, 0
+				for i := range accList.Items {
+					acc := &accList.Items[i]
+					// ignore deleting objects
+					if !acc.GetDeletionTimestamp().IsZero() {
+						skipped++
+						continue
+					}
+					if _, err := c.syncRules(ctx, acc); err != nil {
+						failed++
+						klog.V(4).Infof("[SAA PeriodicResync] sync %s/%s failed: %v", acc.Namespace, acc.Name, err)
+						continue
+					}
+					processed++
+				}
+				klog.V(2).Infof("[SAA PeriodicResync] tick done: total=%d processed=%d skipped=%d failed=%d cost=%s", len(accList.Items), processed, skipped, failed, time.Since(tickStart))
+			}
+		}
+	}()
 }
 
 func equalAccessBindingSlice(a, b interface{}) bool {

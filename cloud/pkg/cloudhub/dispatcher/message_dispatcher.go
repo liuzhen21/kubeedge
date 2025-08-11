@@ -206,7 +206,12 @@ func (md *messageDispatcher) DispatchUpstream(message *beehivemodel.Message, inf
 }
 
 func (md *messageDispatcher) PubToController(info *model.HubInfo, msg *beehivemodel.Message) error {
-	msg.SetResourceOperation(fmt.Sprintf("node/%s/%s", info.NodeID, msg.GetResource()), msg.GetOperation())
+	// auto-prefix node/<nodeID>/ if resource is not already namespaced
+	res := msg.GetResource()
+	if !strings.HasPrefix(res, fmt.Sprintf("node/%s/", info.NodeID)) {
+		res = fmt.Sprintf("node/%s/%s", info.NodeID, res)
+		msg.SetResourceOperation(res, msg.GetOperation())
+	}
 	if model.IsFromEdge(msg) {
 		return md.Publish(msg)
 	}
@@ -456,6 +461,9 @@ func noAckRequired(msg *beehivemodel.Message) bool {
 		return true
 	case strings.Contains(msgResource, beehivemodel.ResourceTypeK8sCA):
 		return true
+	case strings.Contains(msgResource, beehivemodel.ResourceTypeSaAccess):
+		// serviceaccountaccess messages are idempotent and edge can re-request; do not require ack
+		return true
 	case isVolumeOperation(msg.GetOperation()):
 		return true
 	case msg.Router.Operation == metaserver.ApplicationResp:
@@ -535,6 +543,11 @@ func (md *messageDispatcher) DeleteNodeMessagePool(nodeID string, pool *common.N
 }
 
 func (md *messageDispatcher) Publish(msg *beehivemodel.Message) error {
+	// route serviceaccountaccess messages to policycontroller
+	if resourceType, err := messagelayer.GetResourceType(*msg); err == nil && resourceType == beehivemodel.ResourceTypeSaAccess {
+		beehivecontext.SendToGroup(modules.PolicyControllerGroupName, *msg)
+		return nil
+	}
 	switch msg.Router.Source {
 	case metaserver.MetaServerSource:
 		beehivecontext.Send(modules.DynamicControllerModuleName, *msg)

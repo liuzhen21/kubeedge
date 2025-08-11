@@ -51,6 +51,7 @@ import (
 	"github.com/kubeedge/kubeedge/cloud/pkg/dynamiccontroller"
 	"github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller"
 	"github.com/kubeedge/kubeedge/cloud/pkg/policycontroller"
+	policypkg "github.com/kubeedge/kubeedge/cloud/pkg/policycontroller/config"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router"
 	"github.com/kubeedge/kubeedge/cloud/pkg/synccontroller"
 	"github.com/kubeedge/kubeedge/cloud/pkg/taskmanager"
@@ -124,6 +125,8 @@ kubernetes controller which manages devices so that the device metadata/status d
 			gis := informers.GetInformersManager()
 
 			registerModules(config)
+			// init policycontroller config for later usage
+			policypkg.InitConfigure(config.Modules.PolicyController)
 
 			if config.Modules.IptablesManager == nil || config.Modules.IptablesManager.Enable && config.Modules.IptablesManager.Mode == v1alpha1.InternalMode {
 				// By default, IptablesManager manages tunnel port related iptables rules

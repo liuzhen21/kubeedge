@@ -50,6 +50,9 @@ data:
         tunnelPort: 10004
       dynamicController:
         enable: {{ .Values.cloudCore.modules.dynamicController.enable }}
+      policyController:
+        enable: {{ .Values.cloudCore.modules.policyController.enable }}
+        periodicResyncInterval: {{ .Values.cloudCore.modules.policyController.periodicResyncInterval }}
       router:
         enable: {{ .Values.cloudCore.modules.router.enable }}
       iptablesManager:

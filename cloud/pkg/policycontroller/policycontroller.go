@@ -3,6 +3,8 @@ package policycontroller
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -10,6 +12,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 	controllerruntime "sigs.k8s.io/controller-runtime"
+	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	controllerruntimemetrics "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
@@ -18,6 +21,7 @@ import (
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
+	policypkg "github.com/kubeedge/kubeedge/cloud/pkg/policycontroller/config"
 	pm "github.com/kubeedge/kubeedge/cloud/pkg/policycontroller/manager"
 	kefeatures "github.com/kubeedge/kubeedge/pkg/features"
 )
@@ -38,6 +42,9 @@ func init() {
 }
 
 func NewAccessRoleControllerManager(ctx context.Context, kubeCfg *rest.Config) (manager.Manager, error) {
+	// Initialize controller-runtime logging to klog to ensure logs are visible
+	crlog.SetLogger(klog.FromContext(ctx))
+
 	controllerManager, err := controllerruntime.NewManager(kubeCfg, controllerruntime.Options{
 		Scheme: accessScheme,
 		Metrics: controllerruntimemetrics.Options{
@@ -70,7 +77,20 @@ func setupControllers(ctx context.Context, mgr manager.Manager) error {
 	if err := pc.SetupWithManager(ctx, mgr); err != nil {
 		return fmt.Errorf("failed to setup nodegroup controller, %v", err)
 	}
+	// Start periodic resync to ensure eventual consistency on edge nodes.
+	// Default interval: 2 minutes. In production, consider making it configurable.
+	// interval from cloudcore config if available; fallback to 2m
+	interval := getResyncIntervalFromConfig()
+	pc.StartPeriodicResync(ctx, interval)
 	return nil
+}
+
+// getResyncIntervalFromConfig reads periodic resync interval from cloudcore config if present.
+func getResyncIntervalFromConfig() time.Duration {
+	if policypkg.Config.PolicyController.PeriodicResyncInterval.Duration > 0 {
+		return policypkg.Config.PolicyController.PeriodicResyncInterval.Duration
+	}
+	return 2 * time.Minute
 }
 
 func Register(kubeCfg *rest.Config) {
@@ -101,6 +121,37 @@ func (pc *policyController) Enable() bool {
 
 // Start controller
 func (pc *policyController) Start() {
+	// start sync-request receiver before controller manager blocking start
+	go func(ctx context.Context, mgr manager.Manager) {
+		ml := messagelayer.PolicyControllerMessageLayer()
+		// build a lightweight controller for handling sync requests
+		acc := &pm.Controller{Client: mgr.GetClient(), MessageLayer: messagelayer.PolicyControllerMessageLayer()}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			msg, err := ml.Receive()
+			if err != nil {
+				klog.V(2).Infof("[SAA SyncReceiver] receive error: %v", err)
+				continue
+			}
+			parts := strings.Split(msg.GetResource(), "/")
+			if len(parts) < 4 {
+				klog.V(2).Infof("[SAA SyncReceiver] skip invalid resource: %s", msg.GetResource())
+				continue
+			}
+			if parts[0] != "node" || parts[3] != "serviceaccountaccess" || msg.GetOperation() != "query" {
+				klog.V(2).Infof("[SAA SyncReceiver] skip non-sync message: resource=%s op=%s", msg.GetResource(), msg.GetOperation())
+				continue
+			}
+			nodeName := parts[1]
+			namespace := parts[2]
+			acc.HandleSyncRequest(ctx, nodeName, namespace)
+		}
+	}(pc.ctx, pc.manager)
+
 	// mgr.Start will block until the manager has stopped
 	if err := pc.manager.Start(pc.ctx); err != nil {
 		klog.Fatalf("failed to start controller manager, %v", err)

@@ -144,6 +144,11 @@ func (eh *EdgeHub) pubConnectInfo(isConnected bool) {
 			messagepkg.ResourceTypeNodeConnection, messagepkg.OperationNodeConnection).FillBody(content)
 		beehiveContext.SendToGroup(group, *message)
 	}
+	// Notify MetaManager to trigger initial sync when connected
+	if isConnected {
+		syncMsg := model.NewMessage("").BuildRouter(modules.EdgeHubModuleName, modules.MetaGroup, messagepkg.ResourceTypeNodeConnection, messagepkg.OperationNodeConnection).FillBody(content)
+		beehiveContext.Send(modules.MetaManagerModuleName, *syncMsg)
+	}
 }
 
 func (eh *EdgeHub) ifRotationDone() {
