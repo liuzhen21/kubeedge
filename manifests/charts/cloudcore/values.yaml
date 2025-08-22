@@ -8,6 +8,7 @@ cloudCore:
   replicaCount: 1
   hostNetWork: false
   image:
+    registry: ""
     repository: "kubeedge/cloudcore"
     tag: "v1.21.0"
     pullPolicy: "IfNotPresent"
@@ -36,7 +37,7 @@ cloudCore:
       memory: 512Mi
   strategy: {}
   featureGates:
-    requireAuthorization: true
+    requireAuthorization: false
   modules:
     cloudHub:
       # Caution!: Leave this entry to empty will cause CloudCore to exit abnormally once KubeEdge is enabled.
@@ -58,7 +59,7 @@ cloudCore:
     cloudStream:
       enable: true
     dynamicController:
-      enable: true
+      enable: false
     policyController:
       enable: true
       periodicResyncInterval: 2m
@@ -159,7 +160,7 @@ admission:
   labels:
     k8s-app: kubeedge-admission
     kubeedge: kubeedge-admission
-  annoations: {}
+  annotations: {}
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:

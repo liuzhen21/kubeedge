@@ -26,7 +26,7 @@ spec:
       {{- end }}
       containers:
         - name: controller-manager
-          image: {{ .Values.controllerManager.image.repository }}:{{ .Values.controllerManager.image.tag }}
+          image: {{ template "controller.image" . }}
           imagePullPolicy: {{ .Values.controllerManager.image.pullPolicy }}
           {{- with .Values.controllerManager.resources }}
           resources: {{ toYaml . | nindent 12 }}

@@ -43,8 +43,11 @@ spec:
       {{- end }}  
       containers:
       - name: cloudcore
-        image: {{ .Values.cloudCore.image.repository }}:{{ .Values.cloudCore.image.tag }}
+        image: {{ template "cloudcore.image" . }}
         imagePullPolicy: {{ .Values.cloudCore.image.pullPolicy }}
+        env:
+          - name: EDGE_CLUSTER_NAME
+            value: {{ .Values.edgeClusterName }}
         ports:
         - containerPort: 10000
           name: cloudhub
