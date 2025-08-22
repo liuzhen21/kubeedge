@@ -106,7 +106,7 @@ func verifyCertSubject(cert *x509.Certificate, nodeName string) error {
 		return nil
 	}
 	commonName := fmt.Sprintf("system:node:%s", nodeName)
-	if cert.Subject.Organization[0] == "system:nodes" && cert.Subject.CommonName == commonName {
+	if cert.Subject.Organization[0] == "system:nodes" && strings.HasPrefix(cert.Subject.CommonName, commonName) {
 		return nil
 	}
 	return fmt.Errorf("request node name is not match with the certificate")

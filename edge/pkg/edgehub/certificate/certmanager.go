@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -40,6 +42,10 @@ var jitteryDuration = func(totalDuration float64) time.Duration {
 }
 
 var CleanupTokenChan = make(chan struct{}, 1)
+
+const (
+	DefaultClusterName = "default-cluster"
+)
 
 type CertManager struct {
 	RotateCertificates bool
@@ -100,7 +106,7 @@ func (cm *CertManager) getCurrent() (*tls.Certificate, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse certificate data: %v", err)
 	}
-	if cn := certs[0].Subject.CommonName; cn != fmt.Sprintf("system:node:%s", cm.NodeName) {
+	if cn := certs[0].Subject.CommonName; !strings.HasPrefix(cn, fmt.Sprintf("system:node:%s", cm.NodeName)) {
 		return nil, fmt.Errorf("certificate CN %s does not match node name %s", cn, cm.NodeName)
 	}
 	cert.Leaf = certs[0]
@@ -277,12 +283,19 @@ func (cm *CertManager) GetEdgeCert(url string, capem []byte, tlscert tls.Certifi
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate a private key of edge cert, err: %v", err)
 	}
+	clusterName := ""
+	if token != "" {
+		clusterName = getClusterNameFromToken(token)
+	} else {
+		clusterName = getClusterNameFromTLSCert(tlscert)
+	}
+
 	csrPem, err := h.CreateCSR(pkix.Name{
 		Country:      []string{"CN"},
 		Organization: []string{"system:nodes"},
 		//Locality:     []string{"Hangzhou"},
 		//Province:     []string{"Zhejiang"},
-		CommonName: fmt.Sprintf("system:node:%s", cm.NodeName),
+		CommonName: fmt.Sprintf("system:node:%s.%s", cm.NodeName, clusterName),
 	}, pkw, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create a csr of edge cert, err %v", err)
@@ -312,4 +325,70 @@ func (cm *CertManager) GetEdgeCert(url string, capem []byte, tlscert tls.Certifi
 		return nil, nil, fmt.Errorf("failed to call http, code: %d, message: %s", res.StatusCode, string(content))
 	}
 	return content, pkw.DER(), nil
+}
+
+// getClusterNameFromToken extracts cluster name from JWT token header
+func getClusterNameFromToken(token string) string {
+	if token == "" {
+		return DefaultClusterName
+	}
+
+	// JWT token format: header.payload.signature
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return DefaultClusterName
+	}
+
+	// Parse header part
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return DefaultClusterName
+	}
+
+	var header struct {
+		ClusterName string `json:"clustername"`
+	}
+
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return DefaultClusterName
+	}
+
+	if header.ClusterName == "" {
+		return DefaultClusterName
+	}
+
+	return header.ClusterName
+}
+
+// getClusterNameFromTLSCert extracts cluster name from TLS certificate
+func getClusterNameFromTLSCert(tlscert tls.Certificate) string {
+	if len(tlscert.Certificate) == 0 {
+		klog.Warning("TLS certificate is empty, returning default cluster name")
+		return DefaultClusterName
+	}
+
+	// Parse the first certificate in the chain
+	cert, err := x509.ParseCertificate(tlscert.Certificate[0])
+	if err != nil {
+		klog.Errorf("Failed to parse TLS certificate: %v", err)
+		return DefaultClusterName
+	}
+
+	// Try to extract cluster name from DNS names (SAN extension)
+	if len(cert.DNSNames) > 0 {
+		// Use the first DNS name as cluster name
+		clusterName := cert.DNSNames[0]
+		klog.V(4).Infof("Extracted cluster name from certificate DNS names: %s", clusterName)
+		return clusterName
+	}
+
+	// Fallback to CommonName if no DNS names
+	if cert.Subject.CommonName != "" {
+		clusterName := cert.Subject.CommonName
+		klog.V(4).Infof("Extracted cluster name from certificate CommonName: %s", clusterName)
+		return clusterName
+	}
+
+	klog.Warning("No cluster name found in TLS certificate, returning default cluster name")
+	return DefaultClusterName
 }
