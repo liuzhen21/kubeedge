@@ -73,7 +73,7 @@ func SetDefaultsKubeletConfiguration(obj *TailoredKubeletConfiguration) {
 	// default nil or negative value to -1 (implies node allocatable pid limit)
 	obj.PodPidsLimit = utilpointer.Int64(-1)
 	obj.CPUCFSQuotaPeriod = &metav1.Duration{Duration: 100 * time.Millisecond}
-	obj.NodeStatusMaxImages = utilpointer.Int32(0)
+	obj.NodeStatusMaxImages = utilpointer.Int32(50)
 	obj.MaxOpenFiles = 1000000
 	obj.ContentType = "application/json"
 	obj.SerializeImagePulls = utilpointer.Bool(true)
