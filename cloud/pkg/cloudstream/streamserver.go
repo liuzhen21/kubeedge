@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"os"
@@ -35,6 +36,17 @@ import (
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/client"
 	"github.com/kubeedge/kubeedge/common/constants"
 	"github.com/kubeedge/kubeedge/pkg/stream/flushwriter"
+)
+
+const (
+	// Stream server constants
+	StreamCertFile = "/etc/kubeedge-stream.crt"
+	StreamKeyFile  = "/etc/kubeedge-stream.key"
+	CertFileMode   = 0644
+
+	// Certificate constants
+	CertificateBlockType = "CERTIFICATE"
+	PrivateKeyBlockType  = "PRIVATE KEY"
 )
 
 type StreamServer struct {
@@ -404,10 +416,100 @@ func (s *StreamServer) Start() {
 			MinVersion: tls.VersionTLS12,
 		},
 	}
+
+	streamCertFile := StreamCertFile
+	streamKeyFile := StreamKeyFile
+	err = s.initStreamCert(streamCertFile, streamKeyFile)
+	if err != nil {
+		klog.Exitf("Init stream cert error %v", err)
+		return
+	}
+
 	klog.Infof("Prepare to start stream server ...")
-	err = streamServer.ListenAndServeTLS(config.Config.TLSStreamCertFile, config.Config.TLSStreamPrivateKeyFile)
+	err = streamServer.ListenAndServeTLS(streamCertFile, streamKeyFile)
 	if err != nil {
 		klog.Exitf("Start stream server error %v\n", err)
 		return
 	}
+}
+
+// initStreamCert reads the CA certificate and key from the cloudcore secret,
+// generates a new server certificate, and writes it to the specified files
+func (s *StreamServer) initStreamCert(streamCertFile, streamKeyFile string) error {
+	// Get CA certificate and key from cloudcore secret in kubeedge namespace
+	caCrt, caKey, err := s.getCACertificateAndKey()
+	if err != nil {
+		return fmt.Errorf("failed to get CA certificate and key: %v", err)
+	}
+
+	// Generate server certificate using the CA
+	serverCrt, serverKey, err := SignCloudCoreCert(caCrt, caKey)
+	if err != nil {
+		return fmt.Errorf("failed to generate server certificate: %v", err)
+	}
+
+	// Write certificate and key to files
+	if err := s.writeCertificateFiles(streamCertFile, streamKeyFile, serverCrt, serverKey); err != nil {
+		return fmt.Errorf("failed to write certificate files: %v", err)
+	}
+
+	return nil
+}
+
+// getCACertificateAndKey retrieves the CA certificate and key from the cloudcore secret
+func (s *StreamServer) getCACertificateAndKey() ([]byte, []byte, error) {
+	kubeClient := client.GetKubeClient()
+	if kubeClient == nil {
+		return nil, nil, fmt.Errorf("can not get kube client")
+	}
+
+	cloudhubSecret, err := kubeClient.CoreV1().Secrets("kubeedge").Get(context.Background(), "cloudcore", v1.GetOptions{})
+	if err != nil {
+		return nil, nil, fmt.Errorf("get ca secret error: %v", err)
+	}
+
+	caCrt, err := s.extractPEMData(cloudhubSecret.Data["tlsCA.crt"], "root ca cert")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	caKey, err := s.extractPEMData(cloudhubSecret.Data["tlsCA.key"], "root ca key")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return caCrt, caKey, nil
+}
+
+// extractPEMData extracts and decodes PEM data from secret
+func (s *StreamServer) extractPEMData(data []byte, dataType string) ([]byte, error) {
+	if data == nil {
+		return nil, fmt.Errorf("secret %s is missing", dataType)
+	}
+
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM data for %s", dataType)
+	}
+
+	return block.Bytes, nil
+}
+
+// writeCertificateFiles writes the certificate and key to the specified files
+func (s *StreamServer) writeCertificateFiles(certFile, keyFile string, cert, key []byte) error {
+	certPem := pem.EncodeToMemory(&pem.Block{Type: CertificateBlockType, Bytes: cert})
+	keyPem := pem.EncodeToMemory(&pem.Block{Type: PrivateKeyBlockType, Bytes: key})
+
+	klog.V(3).Infof("server crt: %s", string(certPem))
+	klog.V(3).Infof("server key: %s", string(keyPem))
+
+	if err := os.WriteFile(certFile, certPem, CertFileMode); err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(keyFile, keyPem, CertFileMode); err != nil {
+		return err
+	}
+
+	return nil
 }
