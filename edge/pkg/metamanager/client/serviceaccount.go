@@ -228,24 +228,38 @@ func (s *serviceAccount) Get(name string) (*corev1.ServiceAccount, error) {
 
 func CheckTokenExist(token string) bool {
 	if token == "" {
+		klog.V(4).Infof("[Auth] CheckTokenExist: empty token")
 		return false
 	}
 	metas, err := dao.QueryMeta("type", model.ResourceTypeServiceAccountToken)
 	if err != nil {
-		klog.Errorf("query meta %s failed: %v", model.ResourceTypeServiceAccountToken, err)
+		klog.Errorf("[Auth] CheckTokenExist: query meta %s failed: %v", model.ResourceTypeServiceAccountToken, err)
 		return false
 	}
 
-	for _, v := range *metas {
+	klog.Infof("[Auth] CheckTokenExist: checking token (first 30 chars: %s...)", truncateToken(token, 30))
+	klog.Infof("[Auth] CheckTokenExist: found %d serviceaccounttoken records in DB", len(*metas))
+
+	for i, v := range *metas {
 		var tokenRequest authenticationv1.TokenRequest
 		err = json.Unmarshal([]byte(v), &tokenRequest)
 		if err != nil {
-			klog.Errorf("unmarshal resource %s token request failed: %v", model.ResourceTypeServiceAccountToken, err)
-			return false
+			klog.Errorf("[Auth] CheckTokenExist: unmarshal record %d failed: %v", i, err)
+			continue
 		}
 		if tokenRequest.Status.Token == token {
 			return true
 		}
 	}
+
+	klog.Errorf("[Auth] CheckTokenExist: ✗ TOKEN NOT FOUND! Checked %d records, none matched. Request token: %s...",
+		len(*metas), truncateToken(token, 30))
 	return false
+}
+
+func truncateToken(token string, maxLen int) string {
+	if len(token) <= maxLen {
+		return token
+	}
+	return token[:maxLen]
 }
