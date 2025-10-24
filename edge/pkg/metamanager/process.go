@@ -15,6 +15,7 @@ import (
 	cloudmodules "github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/common/constants"
 	connect "github.com/kubeedge/kubeedge/edge/pkg/common/cloudconnection"
+	messagepkg "github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/client"
 	metaManagerConfig "github.com/kubeedge/kubeedge/edge/pkg/metamanager/config"
@@ -451,6 +452,13 @@ func (m *metaManager) process(message model.Message) {
 		constants.CSIOperationTypeControllerUnpublishVolume:
 		m.processVolume(message)
 	default:
+		// handle node connection event from edgehub
+		if message.GetResource() == messagepkg.ResourceTypeNodeConnection && message.GetOperation() == messagepkg.OperationNodeConnection {
+			if content, ok := message.GetContent().(string); ok && content == connect.CloudConnected {
+				m.onCloudConnected()
+				return
+			}
+		}
 		klog.Errorf("metamanager not supported operation: %v", operation)
 	}
 }
@@ -471,4 +479,19 @@ func (m *metaManager) runMetaManager() {
 		klog.V(2).Infof("get a message %+v", msg)
 		m.process(msg)
 	}
+}
+
+// onCloudConnected triggers a best-effort sync request for serviceaccountaccess when cloud connection established.
+func (m *metaManager) onCloudConnected() {
+	if !connect.IsConnected() {
+		return
+	}
+	// Build a query message to require full sync for all namespaces.
+	// Do NOT include node prefix; cloud side will add node/<nodeID>/ automatically.
+	// resource: _/serviceaccountaccess
+	resource := fmt.Sprintf("%s/%s", "_", model.ResourceTypeSaAccess)
+	msg := model.NewMessage("").
+		BuildRouter(modules.MetaManagerModuleName, GroupResource, resource, model.QueryOperation)
+	// fire-and-forget; cloud side will push Update messages back to edge
+	sendToCloud(msg)
 }

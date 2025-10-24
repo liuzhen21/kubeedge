@@ -57,7 +57,10 @@ cloudCore:
     cloudStream:
       enable: true
     dynamicController:
-      enable: false
+      enable: true
+    policyController:
+      enable: true
+      periodicResyncInterval: 2m
     router:
       enable: false
     taskManager:

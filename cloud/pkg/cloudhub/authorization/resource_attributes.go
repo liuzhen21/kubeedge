@@ -92,6 +92,9 @@ func isKubeedgeResourceMessage(router beehivemodel.MessageRoute) bool {
 	switch resourceType {
 	case beehivemodel.ResourceTypeRuleStatus:
 		return true
+	case beehivemodel.ResourceTypeSaAccess:
+		// Treat serviceaccountaccess as kubeedge non-resource for custom sync APIs
+		return true
 	}
 	// kubeedge allows node to update a list of pod status
 	if resourceType == beehivemodel.ResourceTypePodStatus && resourceName == "" {

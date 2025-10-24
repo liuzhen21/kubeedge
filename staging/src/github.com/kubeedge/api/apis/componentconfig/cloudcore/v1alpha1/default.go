@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"path"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
@@ -146,6 +147,10 @@ func NewDefaultCloudCoreConfig() *CloudCoreConfig {
 			IptablesManager: &IptablesManager{
 				Enable: true,
 				Mode:   InternalMode,
+			},
+			PolicyController: &PolicyController{
+				Enable:                 true,
+				PeriodicResyncInterval: metav1.Duration{Duration: 2 * time.Minute},
 			},
 		},
 	}
@@ -299,6 +304,10 @@ func NewMinCloudCoreConfig() *CloudCoreConfig {
 			IptablesManager: &IptablesManager{
 				Enable: true,
 				Mode:   InternalMode,
+			},
+			PolicyController: &PolicyController{
+				Enable:                 true,
+				PeriodicResyncInterval: metav1.Duration{Duration: 2 * time.Minute},
 			},
 		},
 	}
